@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  # Database Service with pre-seeded error logs
+  postgres:
+    image: postgres:16-alpine
+    container_name: mcp-postgres-db
+    environment:
+      POSTGRES_DB: app_db
+      POSTGRES_USER: readonly_user
+      POSTGRES_PASSWORD: safe_password_123
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./benchmark_repo/data/seed_logs.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U readonly_user -d app_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI Backend & MCP Orchestrator
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: mcp-backend-agent
+    ports:
+      - "8000:8000"
+    environment:
+      - MODEL_PROVIDER=gemini
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=gemini-2.0-flash
+      - DATABASE_URL=postgresql://readonly_user:safe_password_123@postgres:5432/app_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./benchmark_repo:/app/benchmark_repo
+
+  # Frontend Dashboard
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.frontend
+    container_name: mcp-frontend-ui
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend

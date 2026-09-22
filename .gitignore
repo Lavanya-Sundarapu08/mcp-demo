@@ -1,0 +1,23 @@
+# Python Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Sensitive Environment Variables & API Keys
+.env
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.db
+
+# Node & Frontend Dependencies
+node_modules/
+.DS_Store
+Thumbs.db
+
+# Build Artifacts
+temp_zip_staging/
