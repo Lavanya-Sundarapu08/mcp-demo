@@ -20,7 +20,13 @@ import {
   Sparkles,
   Download,
   CheckCircle2,
-  FileText
+  FileText,
+  Lock,
+  User,
+  LogOut,
+  KeyRound,
+  ShieldAlert,
+  Fingerprint
 } from "lucide-react";
 
 interface AgentStep {
@@ -96,7 +102,22 @@ interface SessionData {
   };
 }
 
+interface UserAuth {
+  username: string;
+  role: "LEAD_ENGINEER" | "DEVELOPER";
+  displayName: string;
+}
+
 export default function App() {
+  // Authentication & RBAC State
+  const [auth, setAuth] = useState<UserAuth | null>(() => {
+    const saved = localStorage.getItem("mcp_auth_user");
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [loginUsername, setLoginUsername] = useState("admin");
+  const [loginPassword, setLoginPassword] = useState("admin123");
+  const [loginError, setLoginError] = useState("");
+
   const [issueId, setIssueId] = useState<number>(101);
   const [provider, setProvider] = useState<string>("gemini");
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -110,13 +131,63 @@ export default function App() {
   const wsRef = useRef<WebSocket | null>(null);
   const timelineEndRef = useRef<HTMLDivElement | null>(null);
 
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError("");
+
+    if (loginUsername === "admin" && loginPassword === "admin123") {
+      const user: UserAuth = {
+        username: "admin",
+        role: "LEAD_ENGINEER",
+        displayName: "Lavanya (Lead Engineer)"
+      };
+      setAuth(user);
+      localStorage.setItem("mcp_auth_user", JSON.stringify(user));
+    } else if (loginUsername === "developer" && loginPassword === "dev123") {
+      const user: UserAuth = {
+        username: "developer",
+        role: "DEVELOPER",
+        displayName: "Alex (Junior Developer)"
+      };
+      setAuth(user);
+      localStorage.setItem("mcp_auth_user", JSON.stringify(user));
+    } else {
+      setLoginError("Invalid credentials. Use demo accounts below.");
+    }
+  };
+
+  const handleQuickLogin = (role: "LEAD_ENGINEER" | "DEVELOPER" | "GITHUB") => {
+    let user: UserAuth;
+    if (role === "GITHUB" || role === "LEAD_ENGINEER") {
+      user = {
+        username: "Lavanya-Sundarapu08",
+        role: "LEAD_ENGINEER",
+        displayName: "@Lavanya-Sundarapu08 (Lead Engineer)"
+      };
+    } else {
+      user = {
+        username: "alex_dev",
+        role: "DEVELOPER",
+        displayName: "Alex (Software Engineer)"
+      };
+    }
+    setAuth(user);
+    localStorage.setItem("mcp_auth_user", JSON.stringify(user));
+  };
+
+  const handleLogout = () => {
+    setAuth(null);
+    localStorage.removeItem("mcp_auth_user");
+  };
+
   // Connect WebSocket when sessionId is established
   useEffect(() => {
     if (!sessionId) return;
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const host = window.location.hostname || "localhost";
-    const wsUrl = `${protocol}//${host}:8000/ws/${sessionId}`;
+    const port = window.location.port ? `:${window.location.port}` : "";
+    const wsUrl = `${protocol}//${host}${port}/ws/${sessionId}`;
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
@@ -154,7 +225,7 @@ export default function App() {
 
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`http://localhost:8000/api/session/${sessionId}`);
+        const res = await fetch(`/api/session/${sessionId}`);
         if (res.ok) {
           const data = await res.json();
           setSession((prev) => {
@@ -264,7 +335,7 @@ export default function App() {
     setLoading(true);
     setSession(null);
     try {
-      const res = await fetch("http://localhost:8000/api/investigate", {
+      const res = await fetch("/api/investigate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ issue_id: issueId, provider })
@@ -281,7 +352,7 @@ export default function App() {
         audit_log: []
       });
     } catch (err) {
-      alert("Failed to start session. Ensure the FastAPI backend is running on port 8000.");
+      alert("Failed to start session. Ensure the backend server is running.");
     } finally {
       setLoading(false);
     }
@@ -289,8 +360,12 @@ export default function App() {
 
   const handleApprove = async () => {
     if (!sessionId) return;
+    if (auth?.role !== "LEAD_ENGINEER") {
+      alert("Permission Denied: Human-in-the-Loop Git approval requires Lead Engineer clearance.");
+      return;
+    }
     try {
-      await fetch("http://localhost:8000/api/approve", {
+      await fetch("/api/approve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session_id: sessionId })
@@ -303,7 +378,7 @@ export default function App() {
   const handleReject = async () => {
     if (!sessionId) return;
     try {
-      await fetch("http://localhost:8000/api/reject", {
+      await fetch("/api/reject", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session_id: sessionId })
@@ -337,6 +412,7 @@ export default function App() {
       fileContent = `# Autonomous Agent Audit Trail & Governance Report\n\n`;
       fileContent += `**Session ID**: \`${session.session_id}\`\n`;
       fileContent += `**Target Issue**: #${session.issue_id}\n`;
+      fileContent += `**Authorized By**: ${auth?.displayName || "Operator"}\n`;
       fileContent += `**Timestamp**: ${new Date().toISOString()}\n`;
       fileContent += `**Status**: ${session.status}\n\n`;
       fileContent += `## Immutable Audit Log\n\n`;
@@ -361,58 +437,201 @@ export default function App() {
     return entry.actor === auditFilter;
   }) || [];
 
+  // -------------------------------------------------------------
+  // RENDER: Developer Login & Security Gateway (If Unauthenticated)
+  // -------------------------------------------------------------
+  if (!auth) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4 relative overflow-hidden font-sans">
+        {/* Subtle background glow */}
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-indigo-600/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute bottom-1/4 left-1/3 w-80 h-80 bg-emerald-600/10 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="w-full max-w-md bg-slate-900/90 border border-slate-800 rounded-2xl p-8 shadow-2xl backdrop-blur relative z-10 space-y-6">
+          {/* Logo & Header */}
+          <div className="text-center space-y-2">
+            <div className="inline-flex w-12 h-12 rounded-xl bg-gradient-to-tr from-indigo-500 to-emerald-400 items-center justify-center shadow-lg shadow-indigo-500/20 mb-1">
+              <ShieldCheck className="w-7 h-7 text-slate-950 font-bold" />
+            </div>
+            <h1 className="text-xl font-bold tracking-tight text-white">
+              MCP Developer Portal
+            </h1>
+            <p className="text-xs text-slate-400">
+              Autonomous Software Engineering Agent • Role-Based Access Control
+            </p>
+          </div>
+
+          {/* Quick Demo Login Pills */}
+          <div className="bg-slate-950/60 p-3.5 rounded-xl border border-slate-800 space-y-2">
+            <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold block">
+              Quick Demo Access (Select Role):
+            </span>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handleQuickLogin("LEAD_ENGINEER")}
+                className="p-2 rounded-lg bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-700/50 text-indigo-300 text-xs font-semibold flex items-center justify-center gap-1.5 transition"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Tech Lead</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleQuickLogin("DEVELOPER")}
+                className="p-2 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-700/50 text-emerald-300 text-xs font-semibold flex items-center justify-center gap-1.5 transition"
+              >
+                <User className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Developer</span>
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleQuickLogin("GITHUB")}
+              className="w-full p-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold flex items-center justify-center gap-2 transition"
+            >
+              <GitPullRequest className="w-3.5 h-3.5 text-purple-400" />
+              <span>Sign In with GitHub (@Lavanya-Sundarapu08)</span>
+            </button>
+          </div>
+
+          {/* Manual Login Form */}
+          <form onSubmit={handleLogin} className="space-y-4">
+            {loginError && (
+              <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{loginError}</span>
+              </div>
+            )}
+
+            <div className="space-y-1">
+              <label className="text-xs text-slate-300 font-medium block">Username</label>
+              <div className="relative">
+                <User className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                <input
+                  type="text"
+                  value={loginUsername}
+                  onChange={(e) => setLoginUsername(e.target.value)}
+                  placeholder="admin or developer"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-9 pr-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs text-slate-300 font-medium block">Password</label>
+              <div className="relative">
+                <KeyRound className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                <input
+                  type="password"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  placeholder="admin123 or dev123"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-9 pr-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              className="w-full py-2.5 px-4 rounded-lg font-semibold text-sm bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/30 flex items-center justify-center space-x-2 transition"
+            >
+              <Lock className="w-4 h-4" />
+              <span>Authenticate & Enter Console</span>
+            </button>
+          </form>
+
+          {/* Security Architecture Badges */}
+          <div className="pt-3 border-t border-slate-800 text-[11px] text-slate-500 flex items-center justify-between">
+            <span className="flex items-center gap-1">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" /> RBAC Enforced
+            </span>
+            <span className="flex items-center gap-1">
+              <Fingerprint className="w-3.5 h-3.5 text-indigo-400" /> Least-Privilege MCP
+            </span>
+            <span className="flex items-center gap-1">
+              <ClipboardList className="w-3.5 h-3.5 text-cyan-400" /> Audit Logged
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // -------------------------------------------------------------
+  // RENDER: Authenticated Engineering Dashboard
+  // -------------------------------------------------------------
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
       {/* Top Navigation */}
-      <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur px-6 py-4 flex items-center justify-between sticky top-0 z-50">
+      <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur px-6 py-3.5 flex items-center justify-between sticky top-0 z-50">
         <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-500 to-emerald-400 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-            <Cpu className="w-6 h-6 text-slate-950 font-bold" />
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-500 to-emerald-400 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+            <Cpu className="w-5 h-5 text-slate-950 font-bold" />
           </div>
           <div>
-            <h1 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+            <h1 className="text-base font-bold tracking-tight text-white flex items-center gap-2">
               MCP-Powered AI Software Engineer
-              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
                 v2.0 Advanced
               </span>
             </h1>
-            <p className="text-xs text-slate-400">
-              Autonomous Multi-Tool Bug Investigation • Documentation RAG • Root Cause Analysis • AI Test Gen & Retest • Audit Trail
+            <p className="text-[11px] text-slate-400">
+              Autonomous Multi-Tool Bug Investigation • RAG • Root Cause Analysis • AI Test Gen • Audit Trail
             </p>
           </div>
         </div>
 
-        {/* Status Indicators & Model Config */}
-        <div className="flex items-center space-x-4">
-          <div className="flex items-center space-x-2 text-xs bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700">
-            <div className={`w-2 h-2 rounded-full ${wsConnected ? "bg-emerald-400 animate-pulse" : "bg-slate-500"}`} />
-            <span className="text-slate-300">{wsConnected ? "Stream Active" : "Polling Active"}</span>
+        {/* User Badge, Status Indicators & Sign Out */}
+        <div className="flex items-center space-x-3">
+          {/* User Role Badge */}
+          <div className="flex items-center space-x-2 text-xs bg-slate-800/90 px-3 py-1.5 rounded-lg border border-slate-700">
+            <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="font-semibold text-slate-200">{auth.displayName}</span>
+            <span
+              className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${
+                auth.role === "LEAD_ENGINEER"
+                  ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30"
+                  : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+              }`}
+            >
+              {auth.role === "LEAD_ENGINEER" ? "Tech Lead" : "Developer"}
+            </span>
           </div>
 
-          <div className="flex items-center space-x-2 bg-slate-800/80 p-1 rounded-lg border border-slate-700">
+          {/* Model Selector */}
+          <div className="flex items-center space-x-1.5 bg-slate-800/80 p-1 rounded-lg border border-slate-700">
             <button
               onClick={() => setProvider("gemini")}
-              className={`text-xs px-3 py-1 rounded-md font-medium transition ${
+              className={`text-[11px] px-2.5 py-1 rounded font-medium transition ${
                 provider === "gemini" ? "bg-indigo-600 text-white shadow" : "text-slate-400 hover:text-white"
               }`}
             >
-              Gemini 2.0 Flash
+              Gemini 2.0
             </button>
             <button
               onClick={() => setProvider("ollama")}
-              className={`text-xs px-3 py-1 rounded-md font-medium transition ${
+              className={`text-[11px] px-2.5 py-1 rounded font-medium transition ${
                 provider === "ollama" ? "bg-emerald-600 text-white shadow" : "text-slate-400 hover:text-white"
               }`}
             >
-              Ollama (Local)
+              Ollama
             </button>
           </div>
+
+          {/* Sign Out Button */}
+          <button
+            onClick={handleLogout}
+            title="Sign out of developer portal"
+            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 hover:text-rose-400 transition"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
         </div>
       </header>
 
       {/* Real-time Telemetry & Resource Bar */}
-      <div className="bg-slate-900/60 border-b border-slate-800/80 px-6 py-2.5 flex flex-wrap items-center justify-between text-xs gap-3">
-        <div className="flex flex-wrap items-center space-x-6 text-slate-400">
+      <div className="bg-slate-900/60 border-b border-slate-800/80 px-6 py-2 flex flex-wrap items-center justify-between text-xs gap-3">
+        <div className="flex flex-wrap items-center space-x-6 text-slate-400 text-[11px]">
           <div className="flex items-center space-x-2">
             <span className="text-slate-500 font-semibold uppercase tracking-wider text-[10px]">Resource Telemetry</span>
             <div className="h-3 w-[1px] bg-slate-800" />
@@ -1010,7 +1229,15 @@ export default function App() {
                 </h3>
                 <p className="text-xs text-slate-300">
                   The AI agent diagnosed the bug via RAG/PostgreSQL/Slack, authored regression tests, and verified the fix.
-                  Authorize Git branch creation and Pull Request publication?
+                  {auth.role === "LEAD_ENGINEER" ? (
+                    <span className="text-emerald-400 font-semibold block mt-0.5">
+                      ✓ Authenticated as Lead Engineer: You hold clearance to sign and publish this Pull Request.
+                    </span>
+                  ) : (
+                    <span className="text-amber-400 font-semibold block mt-0.5">
+                      ⚠ Authenticated as Developer: Read-only privilege. Approval requires Lead Engineer clearance.
+                    </span>
+                  )}
                 </p>
               </div>
             </div>
@@ -1024,7 +1251,12 @@ export default function App() {
               </button>
               <button
                 onClick={handleApprove}
-                className="flex-1 md:flex-none px-5 py-2 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/30 flex items-center justify-center space-x-2 transition"
+                disabled={auth.role !== "LEAD_ENGINEER"}
+                className={`flex-1 md:flex-none px-5 py-2 rounded-lg text-xs font-bold flex items-center justify-center space-x-2 transition ${
+                  auth.role === "LEAD_ENGINEER"
+                    ? "bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/30 cursor-pointer"
+                    : "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
+                }`}
               >
                 <GitPullRequest className="w-4 h-4" />
                 <span>Approve & Open Pull Request</span>
