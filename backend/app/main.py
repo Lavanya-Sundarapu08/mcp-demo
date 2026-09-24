@@ -64,19 +64,37 @@ async def websocket_event_stream(websocket: WebSocket, session_id: str):
         pass
 
 
+from fastapi.responses import FileResponse
+
 @app.get("/health")
 async def health_check():
     return {
         "status": "healthy",
         "app": settings.APP_NAME,
         "version": settings.VERSION,
-        "mcp_servers": ["filesystem", "github", "postgres", "slack"]
+        "mcp_servers": ["filesystem", "github", "postgres", "slack", "rag"]
     }
 
 
-# Mount static frontend directory (must be mounted last)
-FRONTEND_DIST = settings.ROOT_DIR / "frontend" / "dist"
-if FRONTEND_DIST.exists():
+# Robust multi-path resolution for frontend dist directory
+FRONTEND_DIST = None
+possible_paths = [
+    settings.ROOT_DIR / "frontend" / "dist",
+    Path.cwd() / "frontend" / "dist",
+    Path(__file__).resolve().parent.parent.parent / "frontend" / "dist",
+    Path("/opt/render/project/src/frontend/dist")
+]
+
+for p in possible_paths:
+    if p.exists() and (p / "index.html").exists():
+        FRONTEND_DIST = p
+        break
+
+if FRONTEND_DIST:
+    @app.get("/")
+    async def serve_index():
+        return FileResponse(str(FRONTEND_DIST / "index.html"))
+
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="static")
 
 

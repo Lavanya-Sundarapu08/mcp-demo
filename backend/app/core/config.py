@@ -14,7 +14,7 @@ load_dotenv(ROOT_DIR / ".env")
 class Settings(BaseModel):
     # Application Mode & Port
     APP_NAME: str = "MCP-Powered AI Software Engineering Agent"
-    VERSION: str = "1.0.0"
+    VERSION: str = "2.0.0"
     API_PORT: int = 8000
     DEBUG: bool = True
 
