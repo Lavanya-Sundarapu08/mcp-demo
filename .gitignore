@@ -5,10 +5,7 @@ ENV/
 env/
 
 # Sensitive Environment Variables & API Keys
-.env*
-!.env.example
-**/.env*
-!**/.env.example
+.env
 
 # Python Cache & Bytecode
 __pycache__/

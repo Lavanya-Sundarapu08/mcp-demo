@@ -22,6 +22,7 @@ import filesystem_server
 import github_server
 import postgres_server
 import slack_server
+import rag_server
 
 
 class MCPClientManager:
@@ -32,7 +33,8 @@ class MCPClientManager:
             "filesystem": filesystem_server,
             "github": github_server,
             "postgres": postgres_server,
-            "slack": slack_server
+            "slack": slack_server,
+            "rag": rag_server
         }
         self._tools_cache: Optional[List[Dict[str, Any]]] = None
 
@@ -57,6 +59,8 @@ class MCPClientManager:
             return postgres_server.handle_tool_call(tool_name, arguments)
         elif tool_name.startswith("slack_"):
             return slack_server.handle_tool_call(tool_name, arguments)
+        elif tool_name.startswith("rag_"):
+            return rag_server.handle_tool_call(tool_name, arguments)
         else:
             return {"error": f"Tool '{tool_name}' not recognized by any registered MCP server."}
 

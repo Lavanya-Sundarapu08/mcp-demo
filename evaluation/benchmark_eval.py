@@ -48,21 +48,25 @@ async def run_evaluation():
         "metrics": {}
     }
 
-    # Step 0: Ensure target repo is in buggy state
+    # Step 0: Ensure target repo is in clean buggy state
     auth_file = ROOT_DIR / "benchmark_repo" / "app" / "auth_service.py"
     buggy_code = (
         '    # BUG (Issue #27): Directly indexing user_data["phone"] causes KeyError\n'
         '    # when the user omits the optional phone field during signup!\n'
         '    phone_number = user_data["phone"]'
     )
-    if "user_data.get" in auth_file.read_text(encoding="utf-8"):
-        # Reset to buggy code if previously patched
-        content = auth_file.read_text(encoding="utf-8")
-        patched_code = (
-            '    # FIX (Issue #27): Safely retrieve optional phone with fallback to None\n'
-            '    phone_number = user_data.get("phone")'
-        )
+    patched_code = (
+        '    # FIX (Issue #27): Safely retrieve optional phone with fallback to None\n'
+        '    phone_number = user_data.get("phone")'
+    )
+    content = auth_file.read_text(encoding="utf-8").replace("\r\n", "\n")
+    if patched_code in content:
         auth_file.write_text(content.replace(patched_code, buggy_code), encoding="utf-8")
+
+    # Clean up any generated regression test from previous run
+    regression_test = ROOT_DIR / "benchmark_repo" / "tests" / "test_regression_phone.py"
+    if regression_test.exists():
+        regression_test.unlink()
 
     # Step 1: Baseline Verification (Pre-fix test run)
     print("\n[Phase 1] Executing baseline test suite on unpatched code...")
@@ -95,12 +99,17 @@ async def run_evaluation():
     report["metrics"]["tool_calls_count"] = len(session.steps)
     report["metrics"]["tools_invoked"] = [s.tool_name for s in session.steps]
 
-    # Verify tool calls
+    # Verify all 5 upgraded MCP tools and features
     tool_names = [s.tool_name for s in session.steps]
     assert "github_get_issue" in tool_names, "Missing GitHub tool call!"
+    assert "rag_search_docs" in tool_names, "Missing Documentation RAG tool call!"
     assert "postgres_query_readonly" in tool_names, "Missing Postgres error_logs tool call!"
+    assert "filesystem_write_test" in tool_names, "Missing AI Test Generation tool call!"
     assert "filesystem_apply_patch" in tool_names, "Missing code patch tool call!"
     assert "filesystem_run_tests" in tool_names, "Missing verification test tool call!"
+    assert session.rca is not None, "Missing Root Cause Analysis object!"
+    assert session.generated_test is not None, "Missing AI Generated Test object!"
+    assert len(session.audit_log) > 0, "Missing Audit Log records!"
 
     # Step 3: Post-fix Test Verification
     print("\n[Phase 3] Verifying Post-Patch Automated Test Suite...")

@@ -121,7 +121,7 @@ To generate the evaluation scorecard for your project thesis or presentation:
 | **GitHub Pull Request** | **PR #101 Created** with detailed root cause |
 | **Total Cost** | **$0.00** |
 
-
+---
 
 ## Academic Evaluation Defense Points
 

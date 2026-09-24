@@ -1,0 +1,30 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run MCP AI Agent Backend",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "app.main:app",
+        "--app-dir",
+        "backend",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000"
+      ],
+      "jinja": true,
+      "justMyCode": true,
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Run Evaluation Benchmark",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/evaluation/benchmark_eval.py",
+      "console": "integratedTerminal"
+    }
+  ]
+}

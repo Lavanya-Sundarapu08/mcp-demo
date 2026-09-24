@@ -93,13 +93,19 @@ def apply_patch(filepath: str, old_code: str, new_code: str) -> Dict[str, Any]:
         return {"error": f"File not found: {filepath}"}
 
     content = path.read_text(encoding="utf-8")
-    if old_code not in content:
+    content_norm = content.replace("\r\n", "\n")
+    old_code_norm = old_code.replace("\r\n", "\n")
+    new_code_norm = new_code.replace("\r\n", "\n")
+
+    if old_code_norm not in content_norm:
         return {
             "error": "Target content to replace was not found in the file. Ensure exact whitespace/indentation.",
             "success": False
         }
 
-    updated_content = content.replace(old_code, new_code, 1)
+    updated_content = content_norm.replace(old_code_norm, new_code_norm, 1)
+    if "\r\n" in content:
+        updated_content = updated_content.replace("\n", "\r\n")
     path.write_text(updated_content, encoding="utf-8")
 
     return {
@@ -134,11 +140,38 @@ def run_tests(test_target: str = "tests") -> Dict[str, Any]:
     except subprocess.TimeoutExpired:
         return {"passed": False, "error": "Pytest execution timed out after 30 seconds."}
     except Exception as e:
-        return {"passed": False, "error": f"Failed to execute tests: {str(e)}"}
+        return {"passed": False, "error": str(e)}
+
+
+def write_test(test_filepath: str, test_code: str) -> Dict[str, Any]:
+    """Writes a newly generated regression or unit test file into the workspace tests directory."""
+    clean_rel = test_filepath.strip("/\\")
+    if not clean_rel.startswith("tests"):
+        clean_rel = f"tests/{clean_rel}"
+    path = _resolve_safe_path(clean_rel)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(test_code, encoding="utf-8")
+    return {
+        "success": True,
+        "filepath": clean_rel,
+        "message": f"Successfully created automated test file at '{clean_rel}'."
+    }
 
 
 # Standard MCP Tool Definitions
 TOOLS_SCHEMA = [
+    {
+        "name": "filesystem_write_test",
+        "description": "Writes a new automated pytest test case into the repository tests directory to reproduce and guard against regressions.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "test_filepath": {"type": "string", "description": "Relative path under tests/ (e.g. tests/test_regression_phone.py)."},
+                "test_code": {"type": "string", "description": "Complete Python pytest code for the test case."}
+            },
+            "required": ["test_filepath", "test_code"]
+        }
+    },
     {
         "name": "filesystem_list_files",
         "description": "Lists all source code and configuration files in the project workspace.",
@@ -202,7 +235,9 @@ TOOLS_SCHEMA = [
 
 def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     """Dispatcher for MCP tool calls."""
-    if name == "filesystem_list_files":
+    if name == "filesystem_write_test":
+        return write_test(arguments.get("test_filepath", "tests/test_regression.py"), arguments.get("test_code", ""))
+    elif name == "filesystem_list_files":
         return list_files(arguments.get("directory", "."))
     elif name == "filesystem_read_file":
         return read_file(arguments.get("filepath", ""))

@@ -14,7 +14,13 @@ import {
   ExternalLink,
   ChevronDown,
   ChevronRight,
-  ShieldCheck
+  ShieldCheck,
+  BookOpen,
+  ClipboardList,
+  Sparkles,
+  Download,
+  CheckCircle2,
+  FileText
 } from "lucide-react";
 
 interface AgentStep {
@@ -32,6 +38,42 @@ interface CodeDiff {
   diff_text: string;
 }
 
+interface EvidenceCitation {
+  source_type: string;
+  title: string;
+  detail: string;
+  confidence: number;
+}
+
+interface RootCauseAnalysis {
+  summary: string;
+  root_cause: string;
+  impact_scope: string;
+  severity: string;
+  evidence_citations: EvidenceCitation[];
+}
+
+interface AITestCase {
+  test_filepath: string;
+  test_code: string;
+  test_name: string;
+  initial_status: string;
+  verified_status: string;
+  stdout?: string;
+}
+
+interface AuditLogEntry {
+  id: string;
+  timestamp: string;
+  actor: string;
+  action: string;
+  tool_name?: string;
+  parameters?: any;
+  result_summary?: string;
+  status: string;
+  governance_check?: string;
+}
+
 interface SessionData {
   session_id: string;
   issue_id: number;
@@ -41,6 +83,9 @@ interface SessionData {
   steps: AgentStep[];
   diff?: CodeDiff;
   test_result?: { passed: boolean; stdout: string };
+  rca?: RootCauseAnalysis;
+  generated_test?: AITestCase;
+  audit_log?: AuditLogEntry[];
   pull_request?: { number: number; title: string; html_url: string; head: string; base: string };
   final_summary?: string;
   telemetry?: {
@@ -57,9 +102,10 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [session, setSession] = useState<SessionData | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<"diff" | "tests">("diff");
+  const [activeTab, setActiveTab] = useState<"diff" | "rca" | "tests" | "audit">("diff");
   const [expandedSteps, setExpandedSteps] = useState<{ [key: number]: boolean }>({});
   const [wsConnected, setWsConnected] = useState<boolean>(false);
+  const [auditFilter, setAuditFilter] = useState<string>("ALL");
 
   const wsRef = useRef<WebSocket | null>(null);
   const timelineEndRef = useRef<HTMLDivElement | null>(null);
@@ -118,6 +164,9 @@ export default function App() {
               status: data.status,
               diff: data.diff || prev.diff,
               test_result: data.test_result || prev.test_result,
+              rca: data.rca || prev.rca,
+              generated_test: data.generated_test || prev.generated_test,
+              audit_log: data.audit_log || prev.audit_log,
               pull_request: data.pull_request || prev.pull_request,
               final_summary: data.final_summary || prev.final_summary,
               steps: data.steps && data.steps.length > 0 ? data.steps.map((s: any) => ({
@@ -182,12 +231,21 @@ export default function App() {
           passed: data.passed,
           stdout: data.stdout
         };
+      } else if (type === "rca_generated") {
+        updated.rca = data;
+      } else if (type === "test_generated" || type === "test_status_update") {
+        updated.generated_test = data;
+      } else if (type === "audit_entry") {
+        if (!updated.audit_log) updated.audit_log = [];
+        updated.audit_log.push(data);
       } else if (type === "telemetry_update") {
         updated.telemetry = data;
       } else if (type === "awaiting_approval") {
         updated.status = "AWAITING_APPROVAL";
         if (data.diff) updated.diff = data.diff;
         if (data.summary) updated.final_summary = data.summary;
+        if (data.rca) updated.rca = data.rca;
+        if (data.generated_test) updated.generated_test = data.generated_test;
         if (data.telemetry) updated.telemetry = data.telemetry;
       } else if (type === "approval_received") {
         updated.status = "COMMITTING";
@@ -219,7 +277,8 @@ export default function App() {
         status: data.status,
         provider: data.provider,
         model: data.model,
-        steps: []
+        steps: [],
+        audit_log: []
       });
     } catch (err) {
       alert("Failed to start session. Ensure the FastAPI backend is running on port 8000.");
@@ -261,6 +320,47 @@ export default function App() {
     }));
   };
 
+  const exportAuditLog = (format: "json" | "markdown") => {
+    if (!session?.audit_log || session.audit_log.length === 0) {
+      alert("No audit records available to export.");
+      return;
+    }
+
+    let fileContent = "";
+    let mimeType = "text/plain";
+    let fileName = `audit_report_session_${session.session_id}.${format === "json" ? "json" : "md"}`;
+
+    if (format === "json") {
+      fileContent = JSON.stringify(session.audit_log, null, 2);
+      mimeType = "application/json";
+    } else {
+      fileContent = `# Autonomous Agent Audit Trail & Governance Report\n\n`;
+      fileContent += `**Session ID**: \`${session.session_id}\`\n`;
+      fileContent += `**Target Issue**: #${session.issue_id}\n`;
+      fileContent += `**Timestamp**: ${new Date().toISOString()}\n`;
+      fileContent += `**Status**: ${session.status}\n\n`;
+      fileContent += `## Immutable Audit Log\n\n`;
+      fileContent += `| Timestamp | Actor | Action | Status | Governance Check |\n`;
+      fileContent += `|---|---|---|---|---|\n`;
+      session.audit_log.forEach((entry) => {
+        fileContent += `| ${entry.timestamp.substring(11, 19)} | ${entry.actor} | ${entry.action} | ${entry.status} | ${entry.governance_check || "N/A"} |\n`;
+      });
+    }
+
+    const blob = new Blob([fileContent], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const filteredAuditLog = session?.audit_log?.filter((entry) => {
+    if (auditFilter === "ALL") return true;
+    return entry.actor === auditFilter;
+  }) || [];
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
       {/* Top Navigation */}
@@ -273,11 +373,11 @@ export default function App() {
             <h1 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
               MCP-Powered AI Software Engineer
               <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
-                v1.0 Capstone
+                v2.0 Advanced
               </span>
             </h1>
             <p className="text-xs text-slate-400">
-              Autonomous Multi-Tool Bug Investigation • Model Context Protocol • Human-in-the-Loop
+              Autonomous Multi-Tool Bug Investigation • Documentation RAG • Root Cause Analysis • AI Test Gen & Retest • Audit Trail
             </p>
           </div>
         </div>
@@ -286,7 +386,7 @@ export default function App() {
         <div className="flex items-center space-x-4">
           <div className="flex items-center space-x-2 text-xs bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700">
             <div className={`w-2 h-2 rounded-full ${wsConnected ? "bg-emerald-400 animate-pulse" : "bg-slate-500"}`} />
-            <span className="text-slate-300">{wsConnected ? "Stream Active" : "Disconnected"}</span>
+            <span className="text-slate-300">{wsConnected ? "Stream Active" : "Polling Active"}</span>
           </div>
 
           <div className="flex items-center space-x-2 bg-slate-800/80 p-1 rounded-lg border border-slate-700">
@@ -296,7 +396,7 @@ export default function App() {
                 provider === "gemini" ? "bg-indigo-600 text-white shadow" : "text-slate-400 hover:text-white"
               }`}
             >
-              Gemini 3.6 Flash
+              Gemini 2.0 Flash
             </button>
             <button
               onClick={() => setProvider("ollama")}
@@ -304,7 +404,7 @@ export default function App() {
                 provider === "ollama" ? "bg-emerald-600 text-white shadow" : "text-slate-400 hover:text-white"
               }`}
             >
-              Ollama (Qwen 2.5)
+              Ollama (Local)
             </button>
           </div>
         </div>
@@ -373,7 +473,7 @@ export default function App() {
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
                 >
                   <option value={101}>#101 - 500 Error when phone omitted (Lavanya-Sundarapu08/mcp-demo)</option>
-                  <option value={27}>#27 - 500 Error when phone omitted (Legacy)</option>
+                  <option value={27}>#27 - 500 Error when phone omitted (Benchmark)</option>
                 </select>
               </div>
 
@@ -401,46 +501,55 @@ export default function App() {
             </div>
           </div>
 
-          {/* MCP Tools Connected */}
+          {/* Connected MCP Servers */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm flex-1">
             <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-3 flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              Active MCP Servers
+              Connected MCP Servers
             </h2>
-            <div className="space-y-3 text-xs">
-              <div className="flex items-center justify-between p-2.5 bg-slate-800/60 rounded-lg border border-slate-800">
+            <div className="space-y-2.5 text-xs">
+              <div className="flex items-center justify-between p-2 bg-slate-800/60 rounded-lg border border-slate-800">
                 <span className="flex items-center gap-2 text-slate-300 font-medium">
-                  <FileCode className="w-4 h-4 text-blue-400" /> Filesystem MCP
+                  <BookOpen className="w-3.5 h-3.5 text-cyan-400" /> RAG Docs MCP
                 </span>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  Read/Write (Scoped)
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                  BM25 Offline
                 </span>
               </div>
 
-              <div className="flex items-center justify-between p-2.5 bg-slate-800/60 rounded-lg border border-slate-800">
+              <div className="flex items-center justify-between p-2 bg-slate-800/60 rounded-lg border border-slate-800">
                 <span className="flex items-center gap-2 text-slate-300 font-medium">
-                  <GitPullRequest className="w-4 h-4 text-purple-400" /> GitHub MCP
+                  <FileCode className="w-3.5 h-3.5 text-blue-400" /> Filesystem MCP
                 </span>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  Issues & PRs
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                  Read/Write/Test
                 </span>
               </div>
 
-              <div className="flex items-center justify-between p-2.5 bg-slate-800/60 rounded-lg border border-slate-800">
+              <div className="flex items-center justify-between p-2 bg-slate-800/60 rounded-lg border border-slate-800">
                 <span className="flex items-center gap-2 text-slate-300 font-medium">
-                  <Database className="w-4 h-4 text-amber-400" /> PostgreSQL MCP
+                  <Database className="w-3.5 h-3.5 text-amber-400" /> PostgreSQL MCP
                 </span>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                  Strict Read-Only
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                  Safe Read-Only
                 </span>
               </div>
 
-              <div className="flex items-center justify-between p-2.5 bg-slate-800/60 rounded-lg border border-slate-800">
+              <div className="flex items-center justify-between p-2 bg-slate-800/60 rounded-lg border border-slate-800">
                 <span className="flex items-center gap-2 text-slate-300 font-medium">
-                  <MessageSquare className="w-4 h-4 text-rose-400" /> Slack MCP
+                  <MessageSquare className="w-3.5 h-3.5 text-rose-400" /> Slack MCP
                 </span>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20">
                   Incident History
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between p-2 bg-slate-800/60 rounded-lg border border-slate-800">
+                <span className="flex items-center gap-2 text-slate-300 font-medium">
+                  <GitPullRequest className="w-3.5 h-3.5 text-purple-400" /> GitHub MCP
+                </span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                  Branch & PR
                 </span>
               </div>
             </div>
@@ -448,11 +557,11 @@ export default function App() {
         </section>
 
         {/* Center Column: Live ReAct Execution Timeline */}
-        <section className="col-span-12 lg:col-span-5 flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
+        <section className="col-span-12 lg:col-span-4 flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
           <div className="px-5 py-4 border-b border-slate-800 bg-slate-900/90 flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <Terminal className="w-4 h-4 text-indigo-400" />
-              <h2 className="text-sm font-semibold text-slate-200">ReAct Reasoning & Tool Execution</h2>
+              <h2 className="text-sm font-semibold text-slate-200">ReAct Reasoning & MCP Calls</h2>
             </div>
             {session && (
               <span
@@ -469,13 +578,13 @@ export default function App() {
             )}
           </div>
 
-          <div className="flex-1 p-5 overflow-y-auto max-h-[700px] space-y-4">
+          <div className="flex-1 p-5 overflow-y-auto max-h-[720px] space-y-4">
             {!session || session.steps.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center p-8 text-slate-500">
                 <Cpu className="w-12 h-12 text-slate-700 mb-3 stroke-1" />
                 <p className="text-sm font-medium">No investigation active</p>
                 <p className="text-xs text-slate-600 mt-1 max-w-xs">
-                  Click "Investigate & Fix" to trigger the multi-server MCP agent workflow.
+                  Click "Investigate & Fix" to trigger the 5-step autonomous MCP agent workflow.
                 </p>
               </div>
             ) : (
@@ -543,36 +652,63 @@ export default function App() {
           </div>
         </section>
 
-        {/* Right Column: Code Diff & Pytest Verification */}
-        <section className="col-span-12 lg:col-span-4 flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
-          {/* Tab Selection */}
-          <div className="px-5 py-3 border-b border-slate-800 bg-slate-900/90 flex items-center justify-between">
-            <div className="flex space-x-2">
+        {/* Right Column: 4 Advanced Feature Tabs */}
+        <section className="col-span-12 lg:col-span-5 flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
+          {/* Tab Navigation */}
+          <div className="px-4 py-2.5 border-b border-slate-800 bg-slate-900/90 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap gap-1.5">
               <button
                 onClick={() => setActiveTab("diff")}
-                className={`text-xs px-3 py-1.5 rounded-lg font-medium transition ${
+                className={`text-xs px-2.5 py-1.5 rounded-lg font-medium transition flex items-center gap-1.5 ${
                   activeTab === "diff"
                     ? "bg-slate-800 text-indigo-300 border border-indigo-500/30"
                     : "text-slate-400 hover:text-slate-200"
                 }`}
               >
-                Code Diff
+                <FileCode className="w-3.5 h-3.5" />
+                <span>Code Diff</span>
               </button>
+
               <button
-                onClick={() => setActiveTab("tests")}
-                className={`text-xs px-3 py-1.5 rounded-lg font-medium transition ${
-                  activeTab === "tests"
-                    ? "bg-slate-800 text-indigo-300 border border-indigo-500/30"
+                onClick={() => setActiveTab("rca")}
+                className={`text-xs px-2.5 py-1.5 rounded-lg font-medium transition flex items-center gap-1.5 ${
+                  activeTab === "rca"
+                    ? "bg-slate-800 text-amber-300 border border-amber-500/30"
                     : "text-slate-400 hover:text-slate-200"
                 }`}
               >
-                Pytest Verification
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Root Cause (RCA)</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab("tests")}
+                className={`text-xs px-2.5 py-1.5 rounded-lg font-medium transition flex items-center gap-1.5 ${
+                  activeTab === "tests"
+                    ? "bg-slate-800 text-emerald-300 border border-emerald-500/30"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <Terminal className="w-3.5 h-3.5" />
+                <span>AI Test & Retest</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab("audit")}
+                className={`text-xs px-2.5 py-1.5 rounded-lg font-medium transition flex items-center gap-1.5 ${
+                  activeTab === "audit"
+                    ? "bg-slate-800 text-cyan-300 border border-cyan-500/30"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <ClipboardList className="w-3.5 h-3.5" />
+                <span>Audit Dashboard</span>
               </button>
             </div>
 
             {session?.test_result && (
               <span
-                className={`text-xs px-2 py-0.5 rounded-full font-bold flex items-center gap-1 ${
+                className={`text-[11px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1 ${
                   session.test_result.passed
                     ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
                     : "bg-rose-500/10 text-rose-400 border border-rose-500/30"
@@ -580,25 +716,25 @@ export default function App() {
               >
                 {session.test_result.passed ? (
                   <>
-                    <CheckCircle className="w-3.5 h-3.5" /> Tests Passed
+                    <CheckCircle className="w-3 h-3" /> Retest 100% Passed
                   </>
                 ) : (
                   <>
-                    <XCircle className="w-3.5 h-3.5" /> Tests Failed
+                    <XCircle className="w-3 h-3" /> Failing (Red Phase)
                   </>
                 )}
               </span>
             )}
           </div>
 
-          {/* Tab Content */}
-          <div className="flex-1 p-5 overflow-y-auto max-h-[700px]">
-            {activeTab === "diff" ? (
-              session?.diff ? (
+          {/* Tab 1: Code Diff */}
+          {activeTab === "diff" && (
+            <div className="flex-1 p-5 overflow-y-auto max-h-[720px]">
+              {session?.diff ? (
                 <div className="space-y-2">
                   <div className="text-xs text-slate-400 font-mono flex items-center justify-between">
                     <span>{session.diff.filepath}</span>
-                    <span className="text-[10px] text-indigo-400">Unified Diff</span>
+                    <span className="text-[10px] text-indigo-400 font-semibold">Unified Diff</span>
                   </div>
                   <pre className="bg-slate-950 p-3 rounded-lg text-xs font-mono border border-slate-800 overflow-x-auto leading-relaxed">
                     {session.diff.diff_text.split("\n").map((line, idx) => {
@@ -626,18 +762,239 @@ export default function App() {
                   <FileCode className="w-10 h-10 text-slate-700 mb-2 stroke-1" />
                   <p className="text-xs">No code changes proposed yet</p>
                 </div>
-              )
-            ) : session?.test_result ? (
-              <pre className="bg-slate-950 p-4 rounded-lg text-[11px] font-mono text-slate-300 border border-slate-800 overflow-x-auto whitespace-pre-wrap leading-relaxed">
-                {session.test_result.stdout || "Pytest execution complete with no output."}
-              </pre>
-            ) : (
-              <div className="h-64 flex flex-col items-center justify-center text-center text-slate-500">
-                <Terminal className="w-10 h-10 text-slate-700 mb-2 stroke-1" />
-                <p className="text-xs">Tests have not been executed yet</p>
+              )}
+            </div>
+          )}
+
+          {/* Tab 2: Root Cause Analysis (RCA) */}
+          {activeTab === "rca" && (
+            <div className="flex-1 p-5 overflow-y-auto max-h-[720px] space-y-4">
+              {session?.rca ? (
+                <>
+                  {/* Diagnosis Card */}
+                  <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4" /> Root Cause Diagnosis
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                        Severity: {session.rca.severity}
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-slate-200 font-semibold">{session.rca.summary}</p>
+                    <div className="text-xs text-slate-400 bg-slate-900/60 p-3 rounded-lg border border-slate-800 leading-relaxed font-mono">
+                      {session.rca.root_cause}
+                    </div>
+
+                    <div className="text-[11px] text-slate-400">
+                      <span className="text-slate-500 font-bold uppercase">Impact Scope: </span>
+                      {session.rca.impact_scope}
+                    </div>
+                  </div>
+
+                  {/* Evidence Citations Grid */}
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2.5">
+                      Multi-Source Supporting Evidence Citations
+                    </h3>
+                    <div className="space-y-2.5">
+                      {session.rca.evidence_citations.map((cite, i) => (
+                        <div key={i} className="p-3 bg-slate-950 rounded-lg border border-slate-800 text-xs space-y-1">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-slate-200 flex items-center gap-1.5">
+                              {cite.source_type === "documentation" && <BookOpen className="w-3.5 h-3.5 text-cyan-400" />}
+                              {cite.source_type === "slack" && <MessageSquare className="w-3.5 h-3.5 text-rose-400" />}
+                              {cite.source_type === "postgres" && <Database className="w-3.5 h-3.5 text-amber-400" />}
+                              {cite.source_type === "code" && <FileCode className="w-3.5 h-3.5 text-indigo-400" />}
+                              {cite.title}
+                            </span>
+                            <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-800/30">
+                              {(cite.confidence * 100).toFixed(0)}% Match
+                            </span>
+                          </div>
+                          <p className="text-slate-400 leading-relaxed text-[11px]">{cite.detail}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="h-64 flex flex-col items-center justify-center text-center text-slate-500">
+                  <Sparkles className="w-10 h-10 text-slate-700 mb-2 stroke-1" />
+                  <p className="text-xs">Root Cause Analysis will synthesize as MCP signals arrive</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Tab 3: AI Test Generation & Red/Green Retesting */}
+          {activeTab === "tests" && (
+            <div className="flex-1 p-5 overflow-y-auto max-h-[720px] space-y-4">
+              {session?.generated_test ? (
+                <>
+                  {/* TDD State Lifecycle Bar */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="p-3 rounded-xl bg-rose-950/20 border border-rose-500/30 flex items-center justify-between">
+                      <div>
+                        <div className="text-[10px] text-rose-400 font-bold uppercase tracking-wider">Phase 1: Initial Run</div>
+                        <div className="text-xs font-semibold text-rose-300">🔴 Bug Reproduced</div>
+                      </div>
+                      <span className="text-[10px] font-mono bg-rose-500/20 text-rose-300 px-2 py-0.5 rounded border border-rose-500/30">
+                        {session.generated_test.initial_status}
+                      </span>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-emerald-950/20 border border-emerald-500/30 flex items-center justify-between">
+                      <div>
+                        <div className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider">Phase 2: Post-Patch</div>
+                        <div className="text-xs font-semibold text-emerald-300">🟢 Verified Retest</div>
+                      </div>
+                      <span className="text-[10px] font-mono bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded border border-emerald-500/30">
+                        {session.generated_test.verified_status}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Generated Test Code */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs text-slate-400">
+                      <span className="font-mono flex items-center gap-1.5">
+                        <FileCode className="w-3.5 h-3.5 text-indigo-400" />
+                        {session.generated_test.test_filepath}
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
+                        AI Generated Test
+                      </span>
+                    </div>
+                    <pre className="bg-slate-950 p-3 rounded-lg text-xs font-mono text-emerald-300/90 border border-slate-800 overflow-x-auto leading-relaxed">
+                      {session.generated_test.test_code}
+                    </pre>
+                  </div>
+
+                  {/* Pytest Terminal Log */}
+                  {session?.test_result && (
+                    <div className="space-y-1.5">
+                      <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                        Pytest Execution Output
+                      </div>
+                      <pre className="bg-slate-950 p-3 rounded-lg text-[11px] font-mono text-slate-300 border border-slate-800 overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-48">
+                        {session.test_result.stdout || "Test run completed."}
+                      </pre>
+                    </div>
+                  )}
+                </>
+              ) : session?.test_result ? (
+                <div className="space-y-2">
+                  <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                    Pytest Execution Terminal
+                  </div>
+                  <pre className="bg-slate-950 p-4 rounded-lg text-[11px] font-mono text-slate-300 border border-slate-800 overflow-x-auto whitespace-pre-wrap leading-relaxed">
+                    {session.test_result.stdout}
+                  </pre>
+                </div>
+              ) : (
+                <div className="h-64 flex flex-col items-center justify-center text-center text-slate-500">
+                  <Terminal className="w-10 h-10 text-slate-700 mb-2 stroke-1" />
+                  <p className="text-xs">Tests have not been generated or executed yet</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Tab 4: Audit & Activity Dashboard */}
+          {activeTab === "audit" && (
+            <div className="flex-1 p-5 overflow-y-auto max-h-[720px] space-y-3">
+              {/* Filter and Export Bar */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-1.5 text-xs">
+                  <span className="text-slate-500 text-[10px] font-bold uppercase">Filter:</span>
+                  {["ALL", "AI_AGENT", "HUMAN_OPERATOR", "MCP_HOST"].map((f) => (
+                    <button
+                      key={f}
+                      onClick={() => setAuditFilter(f)}
+                      className={`px-2 py-0.5 rounded text-[10px] font-semibold transition ${
+                        auditFilter === f
+                          ? "bg-indigo-600 text-white"
+                          : "bg-slate-800 text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      {f}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center space-x-1.5">
+                  <button
+                    onClick={() => exportAuditLog("json")}
+                    className="p-1 px-2 rounded text-[10px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 flex items-center gap-1 transition"
+                  >
+                    <Download className="w-3 h-3" /> JSON
+                  </button>
+                  <button
+                    onClick={() => exportAuditLog("markdown")}
+                    className="p-1 px-2 rounded text-[10px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 flex items-center gap-1 transition"
+                  >
+                    <Download className="w-3 h-3" /> Markdown
+                  </button>
+                </div>
               </div>
-            )}
-          </div>
+
+              {/* Audit Records List */}
+              {filteredAuditLog.length > 0 ? (
+                <div className="space-y-2">
+                  {filteredAuditLog.map((entry) => (
+                    <div
+                      key={entry.id}
+                      className="p-2.5 bg-slate-950 rounded-lg border border-slate-800 text-xs space-y-1 font-mono"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-slate-200 flex items-center gap-1.5 text-[11px]">
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              entry.actor === "AI_AGENT"
+                                ? "bg-indigo-400"
+                                : entry.actor === "HUMAN_OPERATOR"
+                                ? "bg-emerald-400"
+                                : "bg-amber-400"
+                            }`}
+                          />
+                          {entry.action}
+                        </span>
+                        <span
+                          className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
+                            entry.status === "SUCCESS"
+                              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                              : entry.status === "PENDING"
+                              ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                              : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                          }`}
+                        >
+                          {entry.status}
+                        </span>
+                      </div>
+
+                      {entry.result_summary && (
+                        <div className="text-[10px] text-slate-400 truncate">
+                          {entry.result_summary}
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between text-[9px] text-slate-500 pt-0.5">
+                        <span>{entry.timestamp.substring(11, 19)} UTC</span>
+                        <span className="text-indigo-400">{entry.governance_check}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="h-64 flex flex-col items-center justify-center text-center text-slate-500">
+                  <ClipboardList className="w-10 h-10 text-slate-700 mb-2 stroke-1" />
+                  <p className="text-xs">No audit entries matching filter</p>
+                </div>
+              )}
+            </div>
+          )}
         </section>
 
         {/* Bottom Banner: Human-in-the-Loop Approval Gate */}
@@ -652,8 +1009,8 @@ export default function App() {
                   Human-in-the-Loop Review Gate: Authorization Required
                 </h3>
                 <p className="text-xs text-slate-300">
-                  The AI agent has verified the patch against all automated unit tests. Do you authorize creating a Git
-                  branch and publishing the GitHub Pull Request?
+                  The AI agent diagnosed the bug via RAG/PostgreSQL/Slack, authored regression tests, and verified the fix.
+                  Authorize Git branch creation and Pull Request publication?
                 </p>
               </div>
             </div>
