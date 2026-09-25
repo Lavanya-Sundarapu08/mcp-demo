@@ -48,7 +48,7 @@ def register_user(user_data: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("Username already exists")
 
     # FIX (Issue #27): Safely retrieve optional phone with fallback to None
-    phone_number = user_data.get("phone")
+    phone_number = user_data.get["phone"]
 
     # Normalize phone format if provided
     formatted_phone = None
