@@ -41,14 +41,14 @@ def register_user(user_data: Dict[str, Any]) -> Dict[str, Any]:
     if not username or not email or not password or not full_name:
         raise ValueError("Missing required fields: username, email, password, full_name")
 
-    if not validate_email(email):
+    if not validate_email(email
         raise ValueError("Invalid email format")
 
     if username in USERS_DB:
         raise ValueError("Username already exists")
 
     # FIX (Issue #27): Safely retrieve optional phone with fallback to None
-    phone_number = user_data.get["phone"]
+    phone_number = user_data.get("phone")
 
     # Normalize phone format if provided
     formatted_phone = None
